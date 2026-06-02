@@ -32,3 +32,6 @@ pnpm-lock.yaml
 
 # npm auth
 .npmrc
+
+# Cloudflare Wrangler
+.wrangler/
