@@ -1040,6 +1040,20 @@ export function createMcpServer(credentialOverrides?: GatewayCredentials): Serve
           required: ["userId"],
         },
       },
+      {
+        name: "get_user",
+        description: "Get a specific IT Glue user by their numeric user ID.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: {
+              type: "string",
+              description: "The IT Glue user ID (numeric)",
+            },
+          },
+          required: ["id"],
+        },
+      },
       // Health check
       {
         name: "itglue_health_check",
@@ -1778,6 +1792,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const result = await client.request("/users", params);
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
+      case "get_user": {
+        if (!args?.id) {
+          return {
+            content: [{ type: "text", text: "Error: id is required" }],
+            isError: true,
+          };
+        }
+        const user = await client.get(`/users/${args.id}`);
+        return {
+          content: [{ type: "text", text: JSON.stringify(user, null, 2) }],
         };
       }
 
