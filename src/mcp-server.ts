@@ -741,6 +741,20 @@ export function createMcpServer(credentialOverrides?: GatewayCredentials): Serve
         },
       },
       {
+        name: "get_document_by_id",
+        description: "Get a specific IT Glue document by its numeric ID alone, without needing the organization ID. Useful when you have a document ID from a URL or from user metrics but don't know which organization it belongs to.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: {
+              type: "string",
+              description: "The document ID",
+            },
+          },
+          required: ["id"],
+        },
+      },
+      {
         name: "list_document_folders",
         description: "List document folders for an organization in IT Glue, returning their names and IDs. Requires a JWT credential (configure via ITGLUE_JWT env var or X-ITGlue-JWT header, or paste one when prompted) — IT Glue's API key scope does not include folder enumeration.",
         inputSchema: {
@@ -997,8 +1011,26 @@ export function createMcpServer(credentialOverrides?: GatewayCredentials): Serve
       },
       // Users
       {
+        name: "list_users",
+        description: "List all IT Glue users with pagination. Use this when you need to browse the full user list — for example, to find someone whose exact name or email you don't know. Prefer search_users when you have a name or email to search by.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            page_size: {
+              type: "number",
+              description: "Number of results per page (max 1000, default 50)",
+            },
+            page_number: {
+              type: "number",
+              description: "Page number to retrieve (default 1)",
+            },
+          },
+          required: [],
+        },
+      },
+      {
         name: "search_users",
-        description: "Search for IT Glue users by name or email address. Use this to find a user's numeric ID before calling get_user_metrics.",
+        description: "Search for IT Glue users by name or email address. Use this to find a user's numeric ID before calling get_user_metrics. If name search returns no results, fall back to list_users to browse the full user list.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1425,6 +1457,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
+      case "get_document_by_id": {
+        if (!args?.id) {
+          return {
+            content: [{ type: "text", text: "Error: id is required" }],
+            isError: true,
+          };
+        }
+        const doc = await client.get(`/documents/${args.id}`);
+        return {
+          content: [{ type: "text", text: JSON.stringify(doc, null, 2) }],
+        };
+      }
+
       case "list_document_folders": {
         if (!args?.organization_id) {
           return {
@@ -1779,6 +1824,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       // Users
+      case "list_users": {
+        const result = await client.request("/users", {
+          page: {
+            size: (args?.page_size as number) || 50,
+            number: (args?.page_number as number) || 1,
+          },
+        });
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
       case "search_users": {
         const params: Record<string, unknown> = {};
         const filter: Record<string, unknown> = {};
