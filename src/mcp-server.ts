@@ -995,6 +995,51 @@ export function createMcpServer(credentialOverrides?: GatewayCredentials): Serve
           required: ["flexible_asset_type_id"],
         },
       },
+      // Users
+      {
+        name: "search_users",
+        description: "Search for IT Glue users by name or email address. Use this to find a user's numeric ID before calling get_user_metrics.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            name: {
+              type: "string",
+              description: "Filter by the user's name (partial match supported)",
+            },
+            email: {
+              type: "string",
+              description: "Filter by the user's email address",
+            },
+          },
+          required: [],
+        },
+      },
+      {
+        name: "get_user_metrics",
+        description: "Get daily activity metrics for a specific IT Glue user — counts of documents/assets created, viewed, edited, and deleted. Returns a totals summary for the full date range plus a per-day breakdown. Use search_users first to resolve a name to a user ID.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            userId: {
+              type: "string",
+              description: "The IT Glue user ID (numeric). Use search_users to find this.",
+            },
+            startDate: {
+              type: "string",
+              description: "Start of the date range in YYYY-MM-DD format. Defaults to 30 days ago.",
+            },
+            endDate: {
+              type: "string",
+              description: "End of the date range in YYYY-MM-DD format. Defaults to today.",
+            },
+            resourceType: {
+              type: "string",
+              description: "Optional: limit metrics to one resource type, e.g. 'Document', 'Password', 'Configuration'. Omit for all types.",
+            },
+          },
+          required: ["userId"],
+        },
+      },
       // Health check
       {
         name: "itglue_health_check",
@@ -1714,6 +1759,88 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             {
               type: "text",
               text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      // Users
+      case "search_users": {
+        const params: Record<string, unknown> = {};
+        const filter: Record<string, unknown> = {};
+
+        if (args?.name) filter.name = args.name;
+        if (args?.email) filter.email = args.email;
+
+        if (Object.keys(filter).length > 0) params.filter = filter;
+        params.page = { size: 50, number: 1 };
+
+        const result = await client.request("/users", params);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
+      case "get_user_metrics": {
+        if (!args?.userId) {
+          return {
+            content: [{ type: "text", text: "Error: userId is required" }],
+            isError: true,
+          };
+        }
+
+        // Default date range: last 30 days
+        const toISODate = (d: Date) => d.toISOString().split("T")[0];
+        const today = new Date();
+        const thirtyDaysAgo = new Date(today);
+        thirtyDaysAgo.setDate(today.getDate() - 30);
+
+        const endDate = args.endDate ? String(args.endDate) : toISODate(today);
+        const startDate = args.startDate ? String(args.startDate) : toISODate(thirtyDaysAgo);
+
+        // Build query params directly — the /user_metrics endpoint requires
+        // underscore filter keys (filter[user_id], filter[date]) which the
+        // camelToKebab helper would mangle to hyphens.
+        const queryParts = [
+          `filter[user_id]=${encodeURIComponent(String(args.userId))}`,
+          `filter[date]=${encodeURIComponent(`${startDate},${endDate}`)}`,
+          "page[size]=1000",
+        ];
+        if (args?.resourceType) {
+          queryParts.push(
+            `filter[resource_type]=${encodeURIComponent(String(args.resourceType))}`
+          );
+        }
+
+        const result = await client.request(`/user_metrics?${queryParts.join("&")}`, {});
+
+        // Sum daily counts across the full date range
+        const rows = result.data as Array<Record<string, unknown>>;
+        const totals = { created: 0, viewed: 0, edited: 0, deleted: 0 };
+        for (const row of rows) {
+          totals.created += Number(row.created ?? 0);
+          totals.viewed  += Number(row.viewed  ?? 0);
+          totals.edited  += Number(row.edited  ?? 0);
+          totals.deleted += Number(row.deleted ?? 0);
+        }
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  summary: {
+                    userId: args.userId,
+                    dateRange: `${startDate} to ${endDate}`,
+                    resourceType: args.resourceType ?? "all",
+                    ...totals,
+                  },
+                  dailyBreakdown: rows,
+                },
+                null,
+                2
+              ),
             },
           ],
         };
